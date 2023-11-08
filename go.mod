@@ -1,4 +1,4 @@
-module github.com/EilenC/go-common
+module github.com/EilenC/ecommon
 
 go 1.17
 

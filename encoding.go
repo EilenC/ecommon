@@ -1,4 +1,4 @@
-package go_common
+package ecommon
 
 import (
 	"bytes"
@@ -7,8 +7,8 @@ import (
 	"golang.org/x/net/html/charset"
 )
 
-//ConvertToUTF8 指定编码转换为UTF8
-//或使用 https://github.com/djimenez/iconv-go
+// ConvertToUTF8 指定编码转换为UTF8
+// 或使用 https://github.com/djimenez/iconv-go
 func ConvertToUTF8(body []byte, origEncoding string) string {
 	byteReader := bytes.NewReader(body)
 	reader, _ := charset.NewReaderLabel(origEncoding, byteReader)
