@@ -1,10 +1,12 @@
-// Package sse Package server implements Server-Sent Events, as specified in RFC 6202.
+// Package sse implements Server-Sent Events, as specified in RFC 6202.
 package sse
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -62,10 +64,10 @@ func (hub *Hub) broadcastMessage(pkg Packet) {
 
 // broadcastZoneMessage 域内广播
 // zone 不为nil时,广播此所有连接
-func (hub *Hub) broadcastZoneMessage(zone string, message Message, zones map[string]Link) {
+func (hub *Hub) broadcastZoneMessage(zone string, message *Message, zones map[string]Link) {
 	for id, b := range zones {
 		select {
-		case b.messageChan <- message.Format():
+		case b.messageChan <- message:
 			hub.broadcastReply(zone, id, message)
 		default:
 		}
@@ -73,7 +75,7 @@ func (hub *Hub) broadcastZoneMessage(zone string, message Message, zones map[str
 }
 
 // broadcastReply 广播消息后给chan推送,方便记录.
-func (hub *Hub) broadcastReply(zone, id string, message Message) {
+func (hub *Hub) broadcastReply(zone, id string, message *Message) {
 	if hub.reply != nil {
 		select {
 		case hub.reply <- fmt.Sprintf("%s:%s send [%s->%s]", zone, id, message.Event, message.Data):
@@ -113,7 +115,7 @@ func (hub *Hub) RegisterBlock(w http.ResponseWriter, r *http.Request, zone strin
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	newBlock := Link{messageChan: make(chan string), createTime: time.Now().Unix()}
+	newBlock := Link{messageChan: make(chan *Message), createTime: time.Now().Unix()}
 	hub.block.Lock()
 	if hub.cons[zone] == nil {
 		hub.cons[zone] = make(map[string]Link)
@@ -124,12 +126,15 @@ func (hub *Hub) RegisterBlock(w http.ResponseWriter, r *http.Request, zone strin
 		close(newBlock.messageChan)
 		hub.UnRegisterBlock(zone, id)
 	}()
-	fmt.Printf("in room id:%s\n", id)
 	go func() {
-		_ = hub.SendMessage(Packet{
-			Message: Message{
-				Event: "ping",
-				Data:  fmt.Sprintf("%s->%s Connection Successful!", zone, id),
+		hub.SendMessage(Packet{
+			Message: &Message{
+				timestamp: time.Now(),
+				ID:        fmt.Sprint(time.Now().Unix()),
+				Event:     "ping",
+				Data:      fmt.Sprintf("%s->%s Connection Successful!", zone, id),
+				Retry:     "",
+				Comment:   "",
 			}, Zone: zone, ID: id,
 		})
 	}()
@@ -137,13 +142,59 @@ func (hub *Hub) RegisterBlock(w http.ResponseWriter, r *http.Request, zone strin
 		select {
 		case message := <-newBlock.messageChan:
 			// push message to client
-			_, _ = io.WriteString(w, message)
+			err := message.WriteConnect(w)
+			if err != nil {
+				hub.reply <- fmt.Sprintf("push message to client err:%+v\n", err.Error())
+			}
 			flusher.Flush()
 		case <-r.Context().Done():
 			// when "es.close()" is called, this loop operation will be ended.
 			return
 		}
 	}
+}
+
+// WriteConnect // Push message to client
+func (m *Message) WriteConnect(w http.ResponseWriter) error {
+	// If the data buffer is an empty string abort.
+	if len(m.Data) == 0 && len(m.Comment) == 0 {
+		return errors.New("message data and comment is empty")
+	}
+	msg, err := m.Format()
+	if err != nil {
+		return err
+	}
+	_, err = io.WriteString(w, msg.String())
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// Format format sse message
+func (m *Message) Format() (*strings.Builder, error) {
+	var (
+		msg strings.Builder
+	)
+	// If the data buffer is an empty string abort.
+	if len(m.Data) == 0 && len(m.Comment) == 0 {
+		return nil, errors.New("message data comment is empty")
+	}
+	defer msg.WriteString(EOF)
+	if len(m.Data) > 0 {
+		msg.WriteString(fmt.Sprintf("id: %s\n", m.ID))
+		msg.WriteString(fmt.Sprintf("data: %s\n", m.Data))
+		if len(m.Event) > 0 {
+			msg.WriteString(fmt.Sprintf("event: %s\n", m.Event))
+		}
+		if len(m.Retry) > 0 {
+			msg.WriteString(fmt.Sprintf("retry: %s\n", m.Retry))
+		}
+	}
+	if len(m.Comment) > 0 {
+		msg.WriteString(fmt.Sprintf(": %s\n", m.Comment))
+	}
+	return &msg, nil
 }
 
 // SendMessage 发送消息 包含广播
@@ -181,7 +232,7 @@ func (hub *Hub) SendMessage(pkg Packet) error {
 		b, ok = cons[pkg.ID]
 		hub.block.Unlock()
 		if ok {
-			b.messageChan <- pkg.Message.Format()
+			b.messageChan <- pkg.Message
 			return nil
 		}
 		return fmt.Errorf("push message to %s chan fail", pkg.ID)

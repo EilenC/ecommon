@@ -106,7 +106,7 @@ func main() {
 		msg["time"] = time.Now().UnixMilli()
 		b, _ := json.Marshal(msg)
 		err := h.SendMessage(sse.Packet{
-			Message: sse.Message{
+			Message: &sse.Message{
 				Event: "customEvent",
 				Data:  string(b),
 			},
@@ -126,7 +126,7 @@ func main() {
 			msg := fmt.Sprintf("loop %+v\n", time.Now().Unix())
 			fmt.Printf(msg)
 			h.SendMessage(sse.Packet{
-				Message: sse.Message{
+				Message: &sse.Message{
 					Event: "customEvent",
 					Data:  msg,
 				},
