@@ -111,7 +111,11 @@ func (hub *Hub) RegisterBlock(w http.ResponseWriter, r *http.Request, zone strin
 		}
 	}
 	id := uuid()
-	flusher, _ := w.(http.Flusher)
+	flusher, err := w.(http.Flusher)
+	if !err {
+		http.Error(w, "Streaming unsupported!", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -135,7 +139,7 @@ func (hub *Hub) RegisterBlock(w http.ResponseWriter, r *http.Request, zone strin
 				Data:      fmt.Sprintf("%s->%s Connection Successful!", zone, id),
 				Retry:     "",
 				Comment:   "",
-			}, Zone: zone, ID: id,
+			}, Zone: zone, ClientID: id,
 		})
 	}()
 	for {
@@ -201,7 +205,7 @@ func (m *Message) Format() (*strings.Builder, error) {
 // pkg Packet 消息包
 func (hub *Hub) SendMessage(pkg Packet) error {
 	lr := len(pkg.Zone)
-	ld := len(pkg.ID)
+	ld := len(pkg.ClientID)
 	//全域广播,没有指定区域
 	if pkg.Broadcast && lr == 0 && ld == 0 {
 		hub.broadcast <- pkg
@@ -226,16 +230,16 @@ func (hub *Hub) SendMessage(pkg Packet) error {
 		hub.broadcastZoneMessage(pkg.Zone, pkg.Message, cons)
 	}
 	//指定了连接ID 直接发送
-	if len(pkg.ID) != 0 {
+	if len(pkg.ClientID) != 0 {
 		var b Link
 		hub.block.Lock()
-		b, ok = cons[pkg.ID]
+		b, ok = cons[pkg.ClientID]
 		hub.block.Unlock()
 		if ok {
 			b.messageChan <- pkg.Message
 			return nil
 		}
-		return fmt.Errorf("push message to %s chan fail", pkg.ID)
+		return fmt.Errorf("push message to %s chan fail", pkg.ClientID)
 	}
 	return nil
 }

@@ -111,7 +111,7 @@ func main() {
 				Data:  string(b),
 			},
 			Zone:      "default",
-			ID:        user,
+			ClientID:  user,
 			Broadcast: user == "",
 		})
 		if err != nil {
@@ -131,7 +131,7 @@ func main() {
 					Data:  msg,
 				},
 				Zone:      "",
-				ID:        "",
+				ClientID:  "",
 				Broadcast: true,
 			})
 			time.Sleep(time.Second * 1)

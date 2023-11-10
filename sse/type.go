@@ -30,11 +30,11 @@ type Link struct {
 type Packet struct {
 	Message   *Message `json:"message"` //发送内容消息体
 	Zone      string   //类似区域概念,每个连接可以在不同区域中
-	ID        string   `json:"id"` //连接ID,用于标识连接
+	ClientID  string   `json:"client_id"` //连接ID,用于标识连接
 	Broadcast bool     //是否广播
 }
 
-// Message server 消息内容
+// Message 消息内容
 type Message struct {
 	timestamp time.Time
 	ID        string //消息ID,可选
