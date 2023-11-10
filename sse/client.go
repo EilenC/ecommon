@@ -118,10 +118,6 @@ func (d *Decoder) Decode() (*Message, error) {
 			return event, nil
 		}
 
-		if strings.HasPrefix(line, ":") {
-			continue // 忽略注释行
-		}
-
 		if strings.HasPrefix(line, "event:") {
 			event.Event = strings.TrimSpace(line[6:])
 		} else if strings.HasPrefix(line, "data:") {
