@@ -235,10 +235,14 @@ func (hub *Hub) SendMessage(pkg Packet) error {
 		hub.block.Lock()
 		b, ok = cons[pkg.ClientID]
 		hub.block.Unlock()
-		if ok {
-			b.messageChan <- pkg.Message
+		if !ok {
 			return nil
 		}
+		select {
+		case b.messageChan <- pkg.Message:
+		default:
+		}
+
 		return fmt.Errorf("push message to %s chan fail", pkg.ClientID)
 	}
 	return nil
