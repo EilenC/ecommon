@@ -129,7 +129,13 @@ func (hub *Hub) RegisterBlock(w http.ResponseWriter, r *http.Request, zone strin
 	defer func() {
 		close(newBlock.messageChan)
 		hub.UnRegisterBlock(zone, id)
+		if hub.DisconnectFunc != nil {
+			hub.DisconnectFunc(id)
+		}
 	}()
+	if hub.ConnectedFunc != nil {
+		hub.ConnectedFunc(id)
+	}
 	go func() {
 		hub.SendMessage(Packet{
 			Message: &Message{

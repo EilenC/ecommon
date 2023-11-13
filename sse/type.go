@@ -1,6 +1,8 @@
 package sse
 
 import (
+	"bufio"
+	"net/http"
 	"sync"
 	"time"
 )
@@ -12,10 +14,12 @@ const (
 // Hub Global SSE Hub
 // reply is nil, no record push message, otherwise it will record
 type Hub struct {
-	cons      map[string]map[string]Link
-	broadcast chan Packet //all broadcast
-	block     sync.Mutex  //block cons
-	reply     chan string
+	cons           map[string]map[string]Link
+	broadcast      chan Packet //all broadcast
+	block          sync.Mutex  //block cons
+	reply          chan string
+	ConnectedFunc  func(clientID string) //连接建立时的处理逻辑
+	DisconnectFunc func(clientID string) //连接建立时的处理逻辑
 }
 
 // Link server 连接
@@ -42,4 +46,21 @@ type Message struct {
 	Data      string //发送内容
 	Retry     string //重试
 	Comment   string //注释
+}
+
+// Client server-sent events client
+type Client struct {
+	url               string
+	method            string
+	eventHandlers     map[string]func(event *Message)
+	connectionHandler func()
+	errorHandler      func(err error)
+	client            *http.Client
+	replyTime         time.Duration
+	StopReplySignal   chan struct{}
+}
+
+// Decoder server-sent events message decode
+type Decoder struct {
+	reader *bufio.Reader
 }

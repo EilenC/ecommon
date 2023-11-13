@@ -1,25 +1,11 @@
 package sse
 
 import (
-	"bufio"
 	"io"
 	"log"
 	"net/http"
-	"strings"
 	"time"
 )
-
-// Client server-sent events client
-type Client struct {
-	url               string
-	method            string
-	eventHandlers     map[string]func(event *Message)
-	connectionHandler func()
-	errorHandler      func(err error)
-	client            *http.Client
-	replyTime         time.Duration
-	StopReplySignal   chan struct{}
-}
 
 // NewClient server-sent events client
 func NewClient(url, method string, replyTime time.Duration) *Client {
@@ -88,48 +74,6 @@ func (c *Client) connect() {
 	c.handleConnectStream(resp.Body)
 	log.Println("server connection disconnected, attempting to reconnect...")
 	return
-}
-
-// Decoder
-type Decoder struct {
-	reader *bufio.Reader
-}
-
-// NewDecoder
-func NewDecoder(reader io.Reader) *Decoder {
-	return &Decoder{
-		reader: bufio.NewReader(reader),
-	}
-}
-
-// Decode
-func (d *Decoder) Decode() (*Message, error) {
-	event := &Message{}
-
-	for {
-		line, err := d.reader.ReadString('\n')
-		if err != nil {
-			return nil, err
-		}
-
-		line = strings.TrimSpace(line)
-
-		if line == "" {
-			return event, nil
-		}
-
-		if strings.HasPrefix(line, "event:") {
-			event.Event = strings.TrimSpace(line[6:])
-		} else if strings.HasPrefix(line, "data:") {
-			event.Data += strings.TrimSpace(line[5:]) + "\n"
-		} else if strings.HasPrefix(line, "id:") {
-			event.ID = strings.TrimSpace(line[3:])
-		} else if strings.HasPrefix(line, "retry:") {
-			event.Retry = strings.TrimSpace(line[6:])
-		} else if strings.HasPrefix(line, ":") {
-			event.Comment = strings.TrimSpace(line[1:])
-		}
-	}
 }
 
 // handleSSEStream
