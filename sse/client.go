@@ -7,99 +7,112 @@ import (
 	"time"
 )
 
-// NewClient server-sent events client
-func NewClient(url, method string, replyTime time.Duration) *Client {
-	if replyTime == 0 {
-		replyTime = 3 * time.Second //default
-	}
-	if method == "" {
-		method = http.MethodGet
+// SubscribeEvent Subscribe to callbacks for events
+func (c *Client) SubscribeEvent(eventName string, callback EventCallback) {
+	c.eventCallbacks[eventName] = callback
+}
+
+func NewClient(url, method string, reconnectDelay time.Duration) *Client {
+	if reconnectDelay == 0 {
+		reconnectDelay = 3 * time.Second //default
 	}
 	return &Client{
-		url:             url,
-		eventHandlers:   make(map[string]func(event *Message)),
-		client:          &http.Client{},
-		replyTime:       replyTime,
-		StopReplySignal: make(chan struct{}),
+		url:            url,
+		method:         method,
+		eventCallbacks: map[string]EventCallback{},
+		client:         &http.Client{},
+		reconnectDelay: reconnectDelay,
+		stopSignal:     make(chan struct{}),
+		exitSignal:     make(chan struct{}),
 	}
 }
 
-// OnEvent subscribe event
-func (c *Client) OnEvent(eventType string, handler func(event *Message)) {
-	c.eventHandlers[eventType] = handler
-}
-
-// OnConnection register connected callback
+// OnConnection callback function upon successful connection registration
+// (not guaranteed to be faster than the first response data)
 func (c *Client) OnConnection(handler func()) {
 	c.connectionHandler = handler
 }
 
-// OnError register connected callback
-func (c *Client) OnError(handler func(err error)) {
-	c.errorHandler = handler
+// OnDisconnect callback function when connection is disconnected
+func (c *Client) OnDisconnect(handler func(err string)) {
+	c.disconnectHandler = handler
 }
 
-// Start client connect server
-func (c *Client) Start() {
-	c.connect()
-
-	ticker := time.Tick(c.replyTime)
-	for {
-		select {
-		case <-ticker:
-			c.connect()
-		case <-c.StopReplySignal:
-			// Stop loop and exit
-			return
-		}
-	}
+// OnExit callback function when client stop
+func (c *Client) OnExit(handler func()) {
+	c.exitHandler = handler
 }
 
-// connect server
+// Stop client stop connect
+func (c *Client) Stop() {
+	go func() {
+		c.exitSignal <- struct{}{}
+	}()
+}
+
+// connect client connect to server
 func (c *Client) connect() {
-	req, err := http.NewRequest(http.MethodGet, c.url, nil)
+	ticker := time.Tick(c.reconnectDelay)
+	req, err := http.NewRequest(c.method, c.url, nil)
 	if err != nil {
 		log.Printf("create server connect fail:%+v\n", err)
 		return
 	}
-	resp, err := c.client.Do(req)
-	if err != nil {
-		log.Printf("connect server fail:%+v\n", err)
-		return
+	for {
+		resp, err := c.client.Do(req)
+		if err != nil {
+			log.Printf("connecting to SSE %s server:%+v\n", c.url, err)
+			log.Printf("reconnecting in %v...\n", c.reconnectDelay)
+			<-ticker
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			log.Printf("http status code error %d \n", resp.StatusCode)
+			log.Printf("reconnecting in %v...\n", c.reconnectDelay)
+			<-ticker
+			continue
+		}
+		if c.connectionHandler != nil {
+			go c.connectionHandler()
+		}
+		go c.listenEvents(resp.Body)
+		<-c.stopSignal
+
+		if c.disconnectHandler != nil {
+			go c.disconnectHandler("client stopped")
+		}
+		log.Printf("reconnecting in %v...\n", c.reconnectDelay)
+		<-ticker
 	}
-	if resp.StatusCode != http.StatusOK {
-		log.Printf("server response status code:%v fail\n", resp.StatusCode)
-		return
-	}
-	c.handleConnectStream(resp.Body)
-	log.Println("server connection disconnected, attempting to reconnect...")
-	return
 }
 
-// handleSSEStream
-func (c *Client) handleConnectStream(body io.ReadCloser) {
+// listenEvents listening for events sent by SSE servers
+func (c *Client) listenEvents(body io.ReadCloser) {
 	defer func(body io.ReadCloser) {
 		_ = body.Close()
 	}(body)
-
 	decoder := NewDecoder(body)
 	for {
-		event, err := decoder.Decode()
+		message, err := decoder.Decode()
 		if err != nil {
-			log.Println("SSE 解码失败:", err)
-			break
+			// processing read error, possibly due to disconnected connection
+			log.Println("reading from sse server:", err)
+			c.stopSignal <- struct{}{}
+			return
 		}
 
-		if event.Event == "connection_established" {
-			if c.connectionHandler != nil {
-				c.connectionHandler()
-			}
-			continue
+		// call the callback function of the subscription
+		if callback, ok := c.eventCallbacks[message.Event]; ok {
+			go callback(message)
 		}
+	}
+}
 
-		handler, ok := c.eventHandlers[event.Event]
-		if ok {
-			handler(event)
-		}
+func (c *Client) Start() {
+	go c.connect()
+	// waiting for interrupt signal
+	<-c.exitSignal
+	if c.exitHandler != nil {
+		c.exitHandler()
 	}
 }

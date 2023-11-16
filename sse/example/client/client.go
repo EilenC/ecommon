@@ -1,35 +1,40 @@
 package main
 
 import (
-	"fmt"
 	"github.com/EilenC/ecommon/sse"
+	"log"
 	"net/http"
 	"time"
 )
 
-func main() {
-	client := sse.NewClient("http://localhost:8080/sse", http.MethodGet, 3*time.Second)
+func connect(id int) {
+	// 创建 SSE 客户端
+	client := sse.NewClient("http://10.8.16.42:8080/sse", http.MethodGet, 3*time.Second)
 
-	// 自定义事件处理逻辑
-	client.OnEvent("ping", func(event *sse.Message) {
-		fmt.Printf("ID:%s 收到 %s 事件: %s\n", event.ID, event.Event, event.Data)
-	})
-
-	// 自定义事件处理逻辑
-	client.OnEvent("customEvent", func(event *sse.Message) {
-		fmt.Printf("ID:%s 收到 %s 事件: %s\n", event.ID, event.Event, event.Data)
-	})
-
-	// 连接建立时的处理逻辑
 	client.OnConnection(func() {
-		fmt.Println("连接已建立")
+		log.Printf("ID:[%d] 连接已建立\n", id)
+	})
+	client.OnDisconnect(func(err string) {
+		log.Printf("ID:[%d] 连接已断开\n", id)
 	})
 
-	// 连接错误时的处理逻辑
-	client.OnError(func(err error) {
-		fmt.Println("连接错误:", err)
+	// 订阅事件，并设置回调函数
+	client.SubscribeEvent("ping", func(message *sse.Message) {
+		log.Printf("ID:[%d] 收到 %s 事件 数据: %s\n", id, message.Event, message.Data)
 	})
 
-	// 启动 SSE 客户端
+	// 订阅事件，并设置回调函数
+	client.SubscribeEvent("customEvent", func(message *sse.Message) {
+		log.Printf("ID:[%d] 收到 %s 事件 数据: %s\n", id, message.Event, message.Data)
+	})
+	//go func() {
+	//	time.Sleep(5 * time.Second)
+	//	client.Stop()
+	//	log.Println("client stop")
+	//}()
 	client.Start()
+}
+
+func main() {
+	connect(0)
 }

@@ -5,14 +5,22 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 )
 
-// NewHub 返回SSE总hub
-// reply 为nil时,不记录推送消息,否则会记录 设计用于返回推送数据 方便记录日志
+const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+var (
+	used  = make(map[string]struct{})
+	mutex sync.Mutex
+)
+
+// NewHub returns SSE total hub
+// designed to return push data for easy logging
 func NewHub(reply chan string) *Hub {
 	h := &Hub{
 		cons:      make(map[string]map[string]Link),
@@ -35,7 +43,7 @@ func NewHub(reply chan string) *Hub {
 	return h
 }
 
-// StartBroadcast 广播
+// StartBroadcast messages to all connections
 func (hub *Hub) StartBroadcast() {
 	for {
 		func() {
@@ -55,15 +63,15 @@ func (hub *Hub) StartBroadcast() {
 	}
 }
 
-// broadcastMessage 将信息广播所有房间与连接
+// broadcastMessage message to all zones connections
 func (hub *Hub) broadcastMessage(pkg Packet) {
 	for zone, cons := range hub.cons {
 		hub.broadcastZoneMessage(zone, pkg.Message, cons)
 	}
 }
 
-// broadcastZoneMessage 域内广播
-// zone 不为nil时,广播此所有连接
+// broadcastZoneMessage zones broadcast message
+// zone is not nil, broadcast all connections
 func (hub *Hub) broadcastZoneMessage(zone string, message *Message, zones map[string]Link) {
 	for id, b := range zones {
 		select {
@@ -74,7 +82,7 @@ func (hub *Hub) broadcastZoneMessage(zone string, message *Message, zones map[st
 	}
 }
 
-// broadcastReply 广播消息后给chan推送,方便记录.
+// broadcastReply after broadcasting the message, push it to Chan for easy recording
 func (hub *Hub) broadcastReply(zone, id string, message *Message) {
 	if hub.reply != nil {
 		select {
@@ -84,9 +92,7 @@ func (hub *Hub) broadcastReply(zone, id string, message *Message) {
 	}
 }
 
-// UnRegisterBlock 注销连接
-// zone string 区域名称.
-// id string http 连接名称.
+// UnRegisterBlock Unregister Connection Delete Data in Map
 func (hub *Hub) UnRegisterBlock(zone, id string) {
 	hub.block.Lock()
 	defer hub.block.Unlock()
@@ -98,16 +104,16 @@ func (hub *Hub) UnRegisterBlock(zone, id string) {
 	return
 }
 
-// RegisterBlock 注册SSE连接.
-// zone string 区域名称 默认 default.
-// uuid func() string 生成连接ID的函数,默认使用时间戳.
+// RegisterBlock registers SSE connections
+// Zone string zone names default
+// Uuid func() string is a function that generates a connection ID, using GetClientID() by default
 func (hub *Hub) RegisterBlock(w http.ResponseWriter, r *http.Request, zone string, uuid func() string) {
 	if zone == "" {
 		zone = "default"
 	}
 	if uuid == nil {
 		uuid = func() string {
-			return fmt.Sprintf("%d", time.Now().UnixNano())
+			return hub.getClientID(16)
 		}
 	}
 	id := uuid()
@@ -137,16 +143,14 @@ func (hub *Hub) RegisterBlock(w http.ResponseWriter, r *http.Request, zone strin
 		hub.ConnectedFunc(id)
 	}
 	go func() {
-		hub.SendMessage(Packet{
-			Message: &Message{
-				timestamp: time.Now(),
-				ID:        fmt.Sprint(time.Now().Unix()),
-				Event:     "ping",
-				Data:      fmt.Sprintf("%s->%s Connection Successful!", zone, id),
-				Retry:     "",
-				Comment:   "",
-			}, Zone: zone, ClientID: id,
-		})
+		message := Message{
+			timestamp: time.Time{},
+			ID:        id,
+			Event:     "ping",
+			Data:      fmt.Sprintf("%s->%s Connection Successful!", zone, id),
+			Retry:     "3",
+		}
+		newBlock.messageChan <- &message
 	}()
 	for {
 		select {
@@ -207,12 +211,11 @@ func (m *Message) Format() (*strings.Builder, error) {
 	return &msg, nil
 }
 
-// SendMessage 发送消息 包含广播
-// pkg Packet 消息包
+// SendMessage sends messages, whether to broadcast is controlled by the Packet parameter
 func (hub *Hub) SendMessage(pkg Packet) error {
 	lr := len(pkg.Zone)
 	ld := len(pkg.ClientID)
-	//全域广播,没有指定区域
+	//all broadcast
 	if pkg.Broadcast && lr == 0 && ld == 0 {
 		hub.broadcast <- pkg
 	}
@@ -231,11 +234,11 @@ func (hub *Hub) SendMessage(pkg Packet) error {
 			return fmt.Errorf("no connections are available")
 		}
 	}
-	//域内广播
+	//zone broadcast
 	if lr != 0 && pkg.Broadcast && ld == 0 {
 		hub.broadcastZoneMessage(pkg.Zone, pkg.Message, cons)
 	}
-	//指定了连接ID 直接发送
+	//directly send with specified Client ID
 	if len(pkg.ClientID) != 0 {
 		var b Link
 		hub.block.Lock()
@@ -246,10 +249,31 @@ func (hub *Hub) SendMessage(pkg Packet) error {
 		}
 		select {
 		case b.messageChan <- pkg.Message:
+			return nil
 		default:
+			return fmt.Errorf("failed to push message to %s chan cap(%d) len(%d)", pkg.ClientID, cap(b.messageChan), len(b.messageChan))
 		}
-
-		return fmt.Errorf("push message to %s chan fail", pkg.ClientID)
 	}
 	return nil
+}
+
+// getClientID randomly obtain a string of 16 characters and numbers
+func (hub *Hub) getClientID(length int) string {
+	charsetLength := len(charset)
+	defer mutex.Unlock()
+	for {
+		randomString := make([]byte, length)
+
+		// 生成随机字符串
+		for i := 0; i < length; i++ {
+			randomString[i] = charset[rand.Intn(charsetLength)]
+		}
+		guid := string(randomString)
+		mutex.Lock()
+		_, exists := used[guid]
+		if !exists {
+			used[guid] = struct{}{}
+			return guid
+		}
+	}
 }

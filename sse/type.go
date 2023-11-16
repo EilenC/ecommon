@@ -48,19 +48,23 @@ type Message struct {
 	Comment   string //注释
 }
 
-// Client server-sent events client
+// Decoder sse 解码器
+type Decoder struct {
+	reader *bufio.Reader
+}
+
+// EventCallback Define the type of SSE event subscription callback function
+type EventCallback func(message *Message)
+
 type Client struct {
 	url               string
 	method            string
-	eventHandlers     map[string]func(event *Message)
-	connectionHandler func()
-	errorHandler      func(err error)
+	eventCallbacks    map[string]EventCallback
 	client            *http.Client
-	replyTime         time.Duration
-	StopReplySignal   chan struct{}
-}
-
-// Decoder server-sent events message decode
-type Decoder struct {
-	reader *bufio.Reader
+	reconnectDelay    time.Duration
+	connectionHandler func()
+	disconnectHandler func(err string)
+	exitHandler       func()
+	stopSignal        chan struct{}
+	exitSignal        chan struct{}
 }
