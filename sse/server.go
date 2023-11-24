@@ -139,9 +139,6 @@ func (hub *Hub) RegisterBlock(w http.ResponseWriter, r *http.Request, zone strin
 			hub.DisconnectFunc(id)
 		}
 	}()
-	if hub.ConnectedFunc != nil {
-		hub.ConnectedFunc(id)
-	}
 	go func() {
 		message := Message{
 			timestamp: time.Time{},
@@ -151,6 +148,9 @@ func (hub *Hub) RegisterBlock(w http.ResponseWriter, r *http.Request, zone strin
 			Retry:     "3",
 		}
 		newBlock.messageChan <- &message
+		if hub.ConnectedFunc != nil {
+			hub.ConnectedFunc(id)
+		}
 	}()
 	for {
 		select {
