@@ -8,3 +8,7 @@ A collection of golang common methods
 | sse       | Simple *Server-sent Events* Server and Client.  |
 | email     | SMTP mail library based on `gopkg.in/domail.v2` |
 
+
+| `File`    | `functionality`                                   |
+|-----------|---------------------------------------------------|
+| file      | Golang encapsulate some methods related to files. |

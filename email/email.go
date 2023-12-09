@@ -2,6 +2,7 @@ package email
 
 import (
 	"fmt"
+	"github.com/EilenC/ecommon"
 	"github.com/EilenC/ecommon/slices"
 	"gopkg.in/gomail.v2"
 	"io"
@@ -45,11 +46,11 @@ func (m *Mail) prepare(emails []string, title, htmlBody string, attachment []str
 	//设置相关的参数
 	subject := title
 	message.SetHeader("To", emails...)
-	message.SetHeader("Subject", subject)                                 //邮件标题
-	message.SetBody("text/html", htmlBody)                                //邮件正文内容
-	for _, path := range slices.RemoveStringDuplicateUseMap(attachment) { //去除重复的附件
-		fileName := getAttachmentName(path)
-		bytes, getErr := getFileContent(path)
+	message.SetHeader("Subject", subject)                                  //邮件标题
+	message.SetBody("text/html", htmlBody)                                 //邮件正文内容
+	for _, path := range slices.RemoveStringDuplicateUseCopy(attachment) { //去除重复的附件
+		fileName := ecommon.GetAttachmentName(path, "|")
+		bytes, getErr := ecommon.GetFileContent(path)
 		if getErr != nil {
 			return nil, fmt.Errorf("SendMail GetFileContent Param:%+v Err:%+v Continue File:[%s]", emails, getErr, path)
 		}
