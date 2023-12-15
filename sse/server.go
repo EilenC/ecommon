@@ -21,20 +21,12 @@ var (
 
 // NewHub returns SSE total hub
 // designed to return push data for easy logging
-func NewHub(reply chan string) *Hub {
+func NewHub(log Log) *Hub {
 	h := &Hub{
 		cons:      make(map[string]map[string]Link),
 		broadcast: make(chan Packet),
 		block:     sync.Mutex{},
-	}
-	if reply != nil {
-		h.reply = reply
-	} else {
-		h.reply = make(chan string)
-		select {
-		case <-h.reply:
-		default:
-		}
+		log:       log,
 	}
 	//started broadcast
 	go func() {
@@ -47,19 +39,24 @@ func NewHub(reply chan string) *Hub {
 func (hub *Hub) StartBroadcast() {
 	for {
 		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					// 在这里处理 panic，并记录日志或采取其他措施
-					hub.reply <- fmt.Sprintf("Server-Sent Events StartBroadcast Panic %+v", r)
-					return
-				}
-			}()
+			defer hub.deferStartBroadcast()
 			select {
 			case message := <-hub.broadcast:
 				hub.broadcastMessage(message)
 			default:
 			}
 		}()
+	}
+}
+
+// deferStartBroadcast return StartBroadcast func
+func (hub *Hub) deferStartBroadcast() {
+	if r := recover(); r != nil {
+		// process panic here and record logs or take other measures
+		if hub.log != nil {
+			hub.log.Error(fmt.Sprintf("StartBroadcast panic %+v", r))
+		}
+		return
 	}
 }
 
@@ -84,11 +81,8 @@ func (hub *Hub) broadcastZoneMessage(zone string, message *Message, zones map[st
 
 // broadcastReply after broadcasting the message, push it to Chan for easy recording
 func (hub *Hub) broadcastReply(zone, id string, message *Message) {
-	if hub.reply != nil {
-		select {
-		case hub.reply <- fmt.Sprintf("%s:%s send [%s->%s]", zone, id, message.Event, message.Data):
-		default:
-		}
+	if hub.log != nil {
+		hub.log.Info(fmt.Sprintf("%s:%s send [%s->%s]", zone, id, message.Event, message.Data))
 	}
 }
 
@@ -158,7 +152,10 @@ func (hub *Hub) RegisterBlock(w http.ResponseWriter, r *http.Request, zone strin
 			// push message to client
 			err := message.WriteConnect(w)
 			if err != nil {
-				hub.reply <- fmt.Sprintf("push message to client err:%+v\n", err.Error())
+				if hub.log != nil {
+					hub.log.Error(fmt.Sprintf("push message to client err:%+v\n", err.Error()))
+				}
+				return
 			}
 			flusher.Flush()
 		case <-r.Context().Done():

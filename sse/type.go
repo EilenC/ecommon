@@ -17,7 +17,7 @@ type Hub struct {
 	cons           map[string]map[string]Link
 	broadcast      chan Packet //all broadcast
 	block          sync.Mutex  //block cons
-	reply          chan string
+	log            Log
 	ConnectedFunc  func(clientID string) //连接建立时的处理逻辑
 	DisconnectFunc func(clientID string) //连接建立时的处理逻辑
 }
