@@ -6,6 +6,7 @@ import (
 	"github.com/EilenC/ecommon/slices"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -62,4 +63,24 @@ func DownloadFile(url string) (*[]byte, error) {
 		return nil, fmt.Errorf("ReadFile Err:[%+v]", err)
 	}
 	return &body, nil
+}
+
+// CreateFile 创建文件，如果路径不存在则自动创建目录
+func CreateFile(filePath string) (*os.File, error) {
+	// 获取文件所在目录
+	dir := filepath.Dir(filePath)
+
+	// 递归创建目录
+	err := os.MkdirAll(dir, os.ModePerm)
+	if err != nil {
+		return nil, fmt.Errorf("error creating directories: %v", err)
+	}
+
+	// 创建文件
+	file, err := os.Create(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("error creating file: %v", err)
+	}
+
+	return file, nil
 }
