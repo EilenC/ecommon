@@ -27,6 +27,7 @@ type Hub struct {
 // createTime 连接创建时的时间戳(秒级)
 type Link struct {
 	messageChan chan *Message //推送消息通道
+	allowPush   chan struct{} //控制消息是否完成
 	createTime  int64         //连接创建时的时间戳(秒级)
 }
 

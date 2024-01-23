@@ -119,7 +119,7 @@ func (hub *Hub) RegisterBlock(w http.ResponseWriter, r *http.Request, zone strin
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	newBlock := Link{messageChan: make(chan *Message), createTime: time.Now().Unix()}
+	newBlock := Link{messageChan: make(chan *Message), allowPush: make(chan struct{}), createTime: time.Now().Unix()}
 	hub.block.Lock()
 	if hub.cons[zone] == nil {
 		hub.cons[zone] = make(map[string]Link)
@@ -158,6 +158,10 @@ func (hub *Hub) RegisterBlock(w http.ResponseWriter, r *http.Request, zone strin
 				return
 			}
 			flusher.Flush()
+			select {
+			case newBlock.allowPush <- struct{}{}:
+			default:
+			}
 		case <-r.Context().Done():
 			// when "es.close()" is called, this loop operation will be ended.
 			return
@@ -244,11 +248,20 @@ func (hub *Hub) SendMessage(pkg Packet) error {
 		if !ok {
 			return nil
 		}
-		select {
-		case b.messageChan <- pkg.Message:
-			return nil
-		default:
-			return fmt.Errorf("failed to push message to %s chan cap(%d) len(%d)", pkg.ClientID, cap(b.messageChan), len(b.messageChan))
+		for {
+			select {
+			case <-b.allowPush:
+				b.messageChan <- pkg.Message
+				return nil
+			default:
+			}
+			select {
+			case b.messageChan <- pkg.Message:
+				// 消息成功推送
+				return nil
+			default:
+				continue
+			}
 		}
 	}
 	return nil
