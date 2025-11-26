@@ -2,12 +2,13 @@ package email
 
 import (
 	"fmt"
-	"github.com/EilenC/ecommon"
-	"github.com/EilenC/ecommon/slices"
-	"gopkg.in/gomail.v2"
 	"io"
 	"mime"
 	"strings"
+
+	"github.com/EilenC/ecommon"
+	"github.com/EilenC/ecommon/slices"
+	"gopkg.in/gomail.v2"
 )
 
 type Mail struct {
@@ -17,6 +18,7 @@ type Mail struct {
 	password string //smtp auth passworld
 
 	sender string
+	sem    chan struct{} // semaphore to limit concurrency
 
 	callBack func(ids string, sendErr, linkErr error) //async send callback
 }
@@ -36,6 +38,7 @@ func NewMail(host string, port int, userName, password, sender string) *Mail {
 		username: userName,
 		password: password,
 		sender:   sender,
+		sem:      make(chan struct{}, 20), // Limit to 20 concurrent sends
 	}
 }
 
@@ -98,7 +101,6 @@ func (m *Mail) send(dd *gomail.Dialer, ids string, message *gomail.Message, errC
 		//}
 	}(d, ids, err, sendErr)
 	sendErr = gomail.Send(d, message)
-	return
 }
 
 // AsyncSendMail 发送邮件
@@ -109,7 +111,11 @@ func (m *Mail) AsyncSendMail(emails, ids []string, title, htmlBody string, attac
 	}
 	//发送邮件
 	dd := gomail.NewDialer(m.host, m.port, m.username, m.password)
-	go m.send(dd, strings.Join(ids, ","), message, nil)
+	m.sem <- struct{}{} // Acquire semaphore
+	go func() {
+		defer func() { <-m.sem }() // Release semaphore
+		m.send(dd, strings.Join(ids, ","), message, nil)
+	}()
 	return nil
 }
 

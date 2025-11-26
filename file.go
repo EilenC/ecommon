@@ -3,11 +3,12 @@ package ecommon
 import (
 	"crypto/tls"
 	"fmt"
-	"github.com/EilenC/ecommon/slices"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/EilenC/ecommon/slices"
 )
 
 // GetFileContent to retrieve file content
@@ -52,6 +53,9 @@ func DownloadFile(url string) (*[]byte, error) {
 	resp, err := client.Get(url)
 	if err != nil || resp.StatusCode != http.StatusOK || resp.Body == nil {
 		return nil, err
+	}
+	if resp.ContentLength == -1 {
+		return nil, fmt.Errorf("content length is unknown")
 	}
 	//resource length from response header and directly create [] byte
 	body := make([]byte, resp.ContentLength)

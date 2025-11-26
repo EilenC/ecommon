@@ -6,6 +6,10 @@ import "io"
 func ReadAllForByte(r io.Reader, b []byte) error {
 	b = b[:0]
 	for {
+		if len(b) == cap(b) {
+			// Add more capacity (let append pick how much).
+			b = append(b, 0)[:len(b)]
+		}
 		n, err := r.Read(b[len(b):cap(b)])
 		b = b[:len(b)+n]
 		if err != nil {
