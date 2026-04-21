@@ -2,6 +2,7 @@ package bitwise
 
 import (
 	"bytes"
+	"encoding/gob"
 	"os"
 	"path/filepath"
 	"testing"
@@ -130,6 +131,52 @@ func TestDecryptFile(t *testing.T) {
 
 	// Clean up encrypted file
 	os.Remove(encryptedPath)
+}
+
+func TestDecryptFileDecodeAndWriteErrors(t *testing.T) {
+	tempDir := t.TempDir()
+
+	invalidGobPath := filepath.Join(tempDir, "invalid.bitwise")
+	if err := os.WriteFile(invalidGobPath, []byte("not gob data"), 0644); err != nil {
+		t.Fatalf("Failed to write invalid gob file: %v", err)
+	}
+	if _, err := DecryptFile(invalidGobPath, "seed", ""); err == nil {
+		t.Fatal("DecryptFile() expected gob decode error")
+	}
+
+	emptyGobPath := filepath.Join(tempDir, "empty.bitwise")
+	emptyFile, err := os.Create(emptyGobPath)
+	if err != nil {
+		t.Fatalf("Failed to create empty gob file: %v", err)
+	}
+	if err := gob.NewEncoder(emptyFile).Encode(Encrypted{}); err != nil {
+		emptyFile.Close()
+		t.Fatalf("Failed to encode empty gob file: %v", err)
+	}
+	emptyFile.Close()
+	if _, err := DecryptFile(emptyGobPath, "seed", ""); err == nil {
+		t.Fatal("DecryptFile() expected empty file error")
+	}
+
+	content := []byte("content")
+	encrypted, err := Encrypt(content, "seed")
+	if err != nil {
+		t.Fatalf("Encrypt() failed: %v", err)
+	}
+	validGobPath := filepath.Join(tempDir, "valid.txt.bitwise")
+	validFile, err := os.Create(validGobPath)
+	if err != nil {
+		t.Fatalf("Failed to create valid gob file: %v", err)
+	}
+	if err := gob.NewEncoder(validFile).Encode(Encrypted{Data: encrypted}); err != nil {
+		validFile.Close()
+		t.Fatalf("Failed to encode valid gob file: %v", err)
+	}
+	validFile.Close()
+
+	if _, err := DecryptFile(validGobPath, "seed", string([]byte{0})); err == nil {
+		t.Fatal("DecryptFile() expected write error")
+	}
 }
 
 func TestEncryptDecryptFileRoundTrip(t *testing.T) {

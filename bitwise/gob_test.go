@@ -1,6 +1,7 @@
 package bitwise
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,6 +65,12 @@ func TestSaveFile(t *testing.T) {
 			encrypted:  []byte("encrypted data"),
 			outputFile: filepath.Join(tempDir, "nested", "dir", "test3.txt"),
 			wantErr:    false,
+		},
+		{
+			name:       "Save with invalid output path",
+			encrypted:  []byte("encrypted data"),
+			outputFile: string([]byte{'b', 'a', 'd', 0}),
+			wantErr:    true,
 		},
 	}
 	for _, tt := range tests {
@@ -183,4 +190,16 @@ func TestSaveAndGetRealFileName(t *testing.T) {
 	if realName != expectedReal {
 		t.Errorf("GetRealFileName() = %v, want %v", realName, expectedReal)
 	}
+}
+
+func TestEncodeEncryptedError(t *testing.T) {
+	if err := encodeEncrypted(errorWriter{}, []byte("data")); err == nil {
+		t.Fatal("encodeEncrypted() expected error")
+	}
+}
+
+type errorWriter struct{}
+
+func (errorWriter) Write([]byte) (int, error) {
+	return 0, errors.New("write failed")
 }

@@ -28,6 +28,13 @@ func TestRemoveStringDuplicateUseMap(t *testing.T) {
 			},
 			want: []string{"A", "B", "C"},
 		},
+		{
+			name: "nil",
+			args: args{
+				list: nil,
+			},
+			want: nil,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -60,6 +67,13 @@ func TestRemoveStringDuplicateUseCopy(t *testing.T) {
 				list: []string{"A", "B", "B", "C"},
 			},
 			want: []string{"A", "B", "C"},
+		},
+		{
+			name: "nil",
+			args: args{
+				list: nil,
+			},
+			want: nil,
 		},
 	}
 	for _, tt := range tests {

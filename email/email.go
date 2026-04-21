@@ -21,6 +21,13 @@ type Mail struct {
 	sem    chan struct{} // semaphore to limit concurrency
 
 	callBack func(ids string, sendErr, linkErr error) //async send callback
+
+	dialerFactory func() mailDialer
+}
+
+type mailDialer interface {
+	Dial() (gomail.SendCloser, error)
+	DialAndSend(...*gomail.Message) error
 }
 
 func (m *Mail) SetCallBack(callBack func(ids string, sendErr, linkErr error)) {
@@ -32,7 +39,7 @@ func (m *Mail) SetSender(sender string) {
 }
 
 func NewMail(host string, port int, userName, password, sender string) *Mail {
-	return &Mail{
+	m := &Mail{
 		host:     host,
 		port:     port,
 		username: userName,
@@ -40,6 +47,10 @@ func NewMail(host string, port int, userName, password, sender string) *Mail {
 		sender:   sender,
 		sem:      make(chan struct{}, 20), // Limit to 20 concurrent sends
 	}
+	m.dialerFactory = func() mailDialer {
+		return gomail.NewDialer(m.host, m.port, m.username, m.password)
+	}
+	return m
 }
 
 // prepare Preparing to send email messages
@@ -65,42 +76,26 @@ func (m *Mail) prepare(emails []string, title, htmlBody string, attachment []str
 	return message, nil
 }
 
-// runSend 执行发送
-func (m *Mail) send(dd *gomail.Dialer, ids string, message *gomail.Message, errChan chan error) {
-	var (
-		err, sendErr error
-		d            gomail.SendCloser
-	)
-	d, err = dd.Dial()
-	if err != nil {
-		errChan <- fmt.Errorf("dials and authenticates to an SMTP server fail:[%+v] 发送邮件ID:%+v", err, ids)
-		return
+func (m *Mail) callback(ids string, sendErr, linkErr error) {
+	if m.callBack != nil {
+		m.callBack(ids, sendErr, linkErr)
 	}
-	defer func(d gomail.SendCloser, ids string, ddErr, sendErr error) {
-		//<-sendEmailCount
-		if ddErr == nil { //第三方链接正常，关闭链接
-			closerErr := d.Close()
-			if closerErr != nil {
-				errChan <- fmt.Errorf("sends the QUIT command and closes the connection to the server:[%+v]", closerErr)
-			}
-		}
-		m.callBack(ids, sendErr, ddErr)
-		//if sendErr != nil || ddErr != nil {
-		//若链接或发送失败,处理数据库中的数据
-		//m.CallBack(eIDs, sendErr, ddErr)
-		//if ddErr != nil {
-		//	if strings.Contains(ddErr.Error(), "550 Mailbox not found") {
-		//		//特殊情况接收邮箱不存在gomail: could not send email 1: 550 Mailbox not found or access denied 也返回发送成功
-		//		e.Log.Infof("发送邮件失败 sysError 接收邮箱不存在或者未激活特殊情况 Err:[%s] EID:[%+v]", ddErr, eIDs)
-		//	}
-		//}
-		//if sendErr != nil {
-		//	e.Log.Infof("发送邮件失败 sysError Err:[%s] EID:[%+v]", sendErr, eIDs)
-		//}
-		//return
-		//}
-	}(d, ids, err, sendErr)
+}
+
+// runSend 执行发送
+func (m *Mail) send(dd mailDialer, ids string, message *gomail.Message) (sendErr, linkErr error) {
+	d, err := dd.Dial()
+	if err != nil {
+		linkErr = fmt.Errorf("dials and authenticates to an SMTP server fail:[%+v] 发送邮件ID:%+v", err, ids)
+		m.callback(ids, nil, linkErr)
+		return nil, linkErr
+	}
 	sendErr = gomail.Send(d, message)
+	if closerErr := d.Close(); closerErr != nil {
+		linkErr = fmt.Errorf("sends the QUIT command and closes the connection to the server:[%+v]", closerErr)
+	}
+	m.callback(ids, sendErr, linkErr)
+	return sendErr, linkErr
 }
 
 // AsyncSendMail 发送邮件
@@ -110,11 +105,10 @@ func (m *Mail) AsyncSendMail(emails, ids []string, title, htmlBody string, attac
 		return err
 	}
 	//发送邮件
-	dd := gomail.NewDialer(m.host, m.port, m.username, m.password)
 	m.sem <- struct{}{} // Acquire semaphore
 	go func() {
 		defer func() { <-m.sem }() // Release semaphore
-		m.send(dd, strings.Join(ids, ","), message, nil)
+		m.send(m.dialerFactory(), strings.Join(ids, ","), message)
 	}()
 	return nil
 }
@@ -126,8 +120,7 @@ func (m *Mail) SendEmail(email, title, htmlBody string, attachment []string) err
 		return err
 	}
 	//发送邮件
-	dd := gomail.NewDialer(m.host, m.port, m.username, m.password)
-	if err := dd.DialAndSend(message); err != nil {
+	if err := m.dialerFactory().DialAndSend(message); err != nil {
 		return err
 	}
 	return nil

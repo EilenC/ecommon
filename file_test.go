@@ -61,6 +61,10 @@ func TestGetFileContent(t *testing.T) {
 
 	// Create a test HTTP server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/missing" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("http content"))
 	}))
@@ -85,10 +89,16 @@ func TestGetFileContent(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:    "HTTPS URL prefix",
-			url:     "https://example.com/test",
+			name:    "HTTP error",
+			url:     server.URL + "/missing",
 			want:    "",
-			wantErr: true, // Will fail because it's not a real server
+			wantErr: true,
+		},
+		{
+			name:    "Local path containing URL text",
+			url:     filepath.Join(tempDir, "contains-http://-text.txt"),
+			want:    "",
+			wantErr: true,
 		},
 		{
 			name:    "Non-existent local file",
@@ -100,10 +110,6 @@ func TestGetFileContent(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Skip HTTPS test that would cause network error
-			if tt.name == "HTTPS URL prefix" {
-				t.Skip("Skipping HTTPS test that requires real network connection")
-			}
 			got, err := GetFileContent(tt.url)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("GetFileContent() error = %v, wantErr %v", err, tt.wantErr)
@@ -130,6 +136,13 @@ func TestDownloadFile(t *testing.T) {
 	}))
 	defer errorServer.Close()
 
+	shortBodyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "20")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("short"))
+	}))
+	defer shortBodyServer.Close()
+
 	tests := []struct {
 		name    string
 		url     string
@@ -146,11 +159,17 @@ func TestDownloadFile(t *testing.T) {
 			name:    "404 error",
 			url:     errorServer.URL,
 			want:    "",
-			wantErr: false, // Function returns nil, not error for non-200 status
+			wantErr: true,
 		},
 		{
 			name:    "Invalid URL",
-			url:     "http://invalid-domain-that-does-not-exist-12345.com",
+			url:     "://bad-url",
+			want:    "",
+			wantErr: true,
+		},
+		{
+			name:    "Read error",
+			url:     shortBodyServer.URL,
 			want:    "",
 			wantErr: true,
 		},
@@ -208,6 +227,43 @@ func TestCreateFile(t *testing.T) {
 				if _, err := os.Stat(tt.path); os.IsNotExist(err) {
 					t.Errorf("CreateFile() file was not created at %v", tt.path)
 				}
+			}
+		})
+	}
+}
+
+func TestCreateFileErrors(t *testing.T) {
+	tempDir := t.TempDir()
+	parentFile := filepath.Join(tempDir, "parent")
+	if err := os.WriteFile(parentFile, []byte("not a dir"), 0644); err != nil {
+		t.Fatalf("failed to create parent file: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		path string
+	}{
+		{
+			name: "mkdir fails",
+			path: string([]byte{'b', 'a', 'd', 0, 'd', 'i', 'r', os.PathSeparator, 'x'}),
+		},
+		{
+			name: "create fails when parent is file",
+			path: filepath.Join(parentFile, "child.txt"),
+		},
+		{
+			name: "create fails with empty file path",
+			path: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if file, err := CreateFile(tt.path); err == nil {
+				if file != nil {
+					file.Close()
+				}
+				t.Fatalf("CreateFile() expected error")
 			}
 		})
 	}

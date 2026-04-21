@@ -4,6 +4,7 @@ import (
 	"encoding/gob"
 	"errors"
 	"github.com/EilenC/ecommon"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,12 +30,14 @@ func SaveFile(encrypted []byte, outPutFile string) (string, error) {
 	defer func(file *os.File) {
 		_ = file.Close()
 	}(file)
-	gobW := gob.NewEncoder(file)
-	err = gobW.Encode(Encrypted{Data: encrypted})
-	if err != nil {
-		return "", errors.New("gob encode err " + err.Error())
+	return filepath.Base(outPutFile), encodeEncrypted(file, encrypted)
+}
+
+func encodeEncrypted(w io.Writer, encrypted []byte) error {
+	if err := gob.NewEncoder(w).Encode(Encrypted{Data: encrypted}); err != nil {
+		return errors.New("gob encode err " + err.Error())
 	}
-	return filepath.Base(outPutFile), nil
+	return nil
 }
 
 // GetRealFileName 获取真实文件名称(去掉路径前缀与加密后的ext)

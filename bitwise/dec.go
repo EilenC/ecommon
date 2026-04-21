@@ -37,7 +37,6 @@ func Decrypt(encB []byte, seed string) ([]byte, error) {
 
 // DecryptFile 指定文件进行解密
 func DecryptFile(filePath, seed, filePrefix string) (string, error) {
-	// 解密文件数据
 	file, err := os.Open(filePath)
 	if err != nil {
 		return "", err
@@ -58,9 +57,6 @@ func DecryptFile(filePath, seed, filePrefix string) (string, error) {
 	b, err := Decrypt(decodedData.Data, seed)
 	if err != nil {
 		return "", err
-	}
-	if len(b) == 0 {
-		return "", errors.New("decrypted file is empty")
 	}
 	suffixExtName := filePrefix + GetRealFileName(filePath)
 	err = os.WriteFile(strings.Join([]string{filepath.Dir(filePath), suffixExtName}, string(os.PathSeparator)), b, os.ModePerm)

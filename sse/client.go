@@ -4,6 +4,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -22,7 +23,7 @@ func NewClient(url, method string, reconnectDelay time.Duration) *Client {
 		eventCallbacks: map[string]EventCallback{},
 		client:         &http.Client{},
 		reconnectDelay: reconnectDelay,
-		stopSignal:     make(chan struct{}),
+		stopSignal:     make(chan struct{}, 1),
 		exitSignal:     make(chan struct{}),
 	}
 }
@@ -45,44 +46,71 @@ func (c *Client) OnExit(handler func()) {
 
 // Stop client stop connect
 func (c *Client) Stop() {
-	go func() {
-		c.exitSignal <- struct{}{}
-	}()
+	c.stopOnce.Do(func() {
+		close(c.exitSignal)
+	})
 }
 
 // connect client connect to server
 func (c *Client) connect() {
-	ticker := time.Tick(c.reconnectDelay)
-	req, err := http.NewRequest(c.method, c.url, nil)
-	if err != nil {
-		log.Printf("create server connect fail:%+v\n", err)
-		return
-	}
+	ticker := time.NewTicker(c.reconnectDelay)
+	defer ticker.Stop()
 	for {
+		select {
+		case <-c.exitSignal:
+			return
+		default:
+		}
+		req, err := http.NewRequest(c.method, c.url, nil)
+		if err != nil {
+			log.Printf("create server connect fail:%+v\n", err)
+			return
+		}
 		resp, err := c.client.Do(req)
 		if err != nil {
 			log.Printf("connecting to SSE %s server:%+v\n", c.url, err)
 			log.Printf("reconnecting in %v...\n", c.reconnectDelay)
-			<-ticker
+			if !c.waitReconnect(ticker.C) {
+				return
+			}
 			continue
 		}
 		if resp.StatusCode != http.StatusOK {
+			_ = resp.Body.Close()
 			log.Printf("http status code error %d \n", resp.StatusCode)
 			log.Printf("reconnecting in %v...\n", c.reconnectDelay)
-			<-ticker
+			if !c.waitReconnect(ticker.C) {
+				return
+			}
 			continue
 		}
 		if c.connectionHandler != nil {
 			go c.connectionHandler()
 		}
 		go c.listenEvents(resp.Body)
-		<-c.stopSignal
+		select {
+		case <-c.stopSignal:
+		case <-c.exitSignal:
+			_ = resp.Body.Close()
+			return
+		}
 
 		if c.disconnectHandler != nil {
 			go c.disconnectHandler("client stopped")
 		}
 		log.Printf("reconnecting in %v...\n", c.reconnectDelay)
-		<-ticker
+		if !c.waitReconnect(ticker.C) {
+			return
+		}
+	}
+}
+
+func (c *Client) waitReconnect(ticker <-chan time.Time) bool {
+	select {
+	case <-ticker:
+		return true
+	case <-c.exitSignal:
+		return false
 	}
 }
 
@@ -96,8 +124,13 @@ func (c *Client) listenEvents(body io.ReadCloser) {
 		message, err := decoder.Decode()
 		if err != nil {
 			// processing read error, possibly due to disconnected connection
-			log.Println("reading from sse server:", err)
-			c.stopSignal <- struct{}{}
+			if !strings.Contains(err.Error(), "use of closed network connection") {
+				log.Println("reading from sse server:", err)
+			}
+			select {
+			case c.stopSignal <- struct{}{}:
+			default:
+			}
 			return
 		}
 

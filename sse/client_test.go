@@ -1,6 +1,11 @@
 package sse
 
 import (
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -213,6 +218,266 @@ func TestClient_Stop(t *testing.T) {
 	<-done
 }
 
+func TestClient_Start(t *testing.T) {
+	client := NewClient("://bad-url", "GET", time.Millisecond)
+	done := make(chan struct{})
+	client.OnExit(func() {
+		close(done)
+	})
+
+	go client.Start()
+	client.Stop()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Start() did not call exit handler")
+	}
+}
+
+func TestClient_connectInvalidRequest(t *testing.T) {
+	client := NewClient("http://localhost/events", "\n", time.Millisecond)
+	done := make(chan struct{})
+	go func() {
+		client.connect()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("connect() did not return for invalid request")
+	}
+}
+
+func TestClient_connectDoError(t *testing.T) {
+	client := NewClient("http://localhost/events", http.MethodGet, time.Millisecond)
+	client.client = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("connect failed")
+	})}
+
+	done := make(chan struct{})
+	go func() {
+		client.connect()
+		close(done)
+	}()
+	time.Sleep(5 * time.Millisecond)
+	client.Stop()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("connect() did not stop after transport error")
+	}
+}
+
+func TestClient_connectDoErrorStoppedBeforeRetry(t *testing.T) {
+	requested := make(chan struct{}, 1)
+	client := NewClient("http://localhost/events", http.MethodGet, time.Hour)
+	client.client = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		requested <- struct{}{}
+		return nil, errors.New("connect failed")
+	})}
+
+	done := make(chan struct{})
+	go func() {
+		client.connect()
+		close(done)
+	}()
+
+	select {
+	case <-requested:
+	case <-time.After(time.Second):
+		t.Fatal("connect() did not attempt request")
+	}
+	client.Stop()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("connect() did not stop while waiting to retry")
+	}
+}
+
+func TestClient_connectStatusError(t *testing.T) {
+	requested := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requested <- struct{}{}
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, http.MethodGet, time.Millisecond)
+	done := make(chan struct{})
+	go func() {
+		client.connect()
+		close(done)
+	}()
+
+	select {
+	case <-requested:
+	case <-time.After(time.Second):
+		t.Fatal("connect() did not request server")
+	}
+	client.Stop()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("connect() did not stop after status error")
+	}
+}
+
+func TestClient_connectStatusErrorRetries(t *testing.T) {
+	requests := make(chan struct{}, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests <- struct{}{}
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, http.MethodGet, time.Millisecond)
+	done := make(chan struct{})
+	go func() {
+		client.connect()
+		close(done)
+	}()
+
+	for i := 0; i < 2; i++ {
+		select {
+		case <-requests:
+		case <-time.After(time.Second):
+			t.Fatalf("connect() request %d timed out", i+1)
+		}
+	}
+	client.Stop()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("connect() did not stop after retry")
+	}
+}
+
+func TestClient_connectStopsWhileConnected(t *testing.T) {
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		<-release
+	}))
+	defer server.Close()
+	defer close(release)
+
+	client := NewClient(server.URL, http.MethodGet, time.Millisecond)
+	done := make(chan struct{})
+	go func() {
+		client.connect()
+		close(done)
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+	client.Stop()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("connect() did not stop while connected")
+	}
+}
+
+func TestClient_connectAlreadyStopped(t *testing.T) {
+	client := NewClient("http://localhost/events", http.MethodGet, time.Millisecond)
+	client.Stop()
+	client.connect()
+}
+
+func TestClient_StartWithoutExitHandler(t *testing.T) {
+	client := NewClient("://bad-url", "GET", time.Millisecond)
+	done := make(chan struct{})
+	go func() {
+		client.Start()
+		close(done)
+	}()
+	client.Stop()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Start() without exit handler did not return")
+	}
+}
+
+func TestClient_listenEventsClosedConnectionError(t *testing.T) {
+	client := NewClient("http://localhost/events", http.MethodGet, time.Millisecond)
+	client.listenEvents(errorReadCloser{err: errors.New("use of closed network connection")})
+}
+
+func TestClient_connectSuccessAndListenEvents(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("event: test\ndata: hello\n\n"))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, http.MethodGet, time.Millisecond)
+	connected := make(chan struct{}, 1)
+	disconnected := make(chan string, 1)
+	event := make(chan *Message, 1)
+	client.OnConnection(func() {
+		connected <- struct{}{}
+	})
+	client.OnDisconnect(func(err string) {
+		disconnected <- err
+	})
+	client.SubscribeEvent("test", func(message *Message) {
+		event <- message
+	})
+
+	done := make(chan struct{})
+	go func() {
+		client.connect()
+		close(done)
+	}()
+
+	select {
+	case <-connected:
+	case <-time.After(time.Second):
+		t.Fatal("connect() did not call connection handler")
+	}
+	select {
+	case msg := <-event:
+		if msg.Data != "hello\n" {
+			t.Fatalf("event data = %q, want %q", msg.Data, "hello\n")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("listenEvents() did not call event callback")
+	}
+	select {
+	case got := <-disconnected:
+		if got != "client stopped" {
+			t.Fatalf("disconnect err = %q, want client stopped", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("connect() did not call disconnect handler")
+	}
+	client.Stop()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("connect() did not stop")
+	}
+}
+
+func TestClient_listenEventsEOF(t *testing.T) {
+	client := NewClient("http://localhost/events", http.MethodGet, time.Millisecond)
+	client.listenEvents(io.NopCloser(strings.NewReader("")))
+
+	select {
+	case <-client.stopSignal:
+	default:
+		t.Fatal("listenEvents() did not signal stop on EOF")
+	}
+}
+
 func TestClient_AllHandlers(t *testing.T) {
 	client := NewClient("http://localhost/events", "GET", 3*time.Second)
 
@@ -260,4 +525,22 @@ func TestClient_AllHandlers(t *testing.T) {
 	if !connectionCalled || !disconnectCalled || !exitCalled || !eventCalled {
 		t.Error("Not all handlers were called successfully")
 	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+type errorReadCloser struct {
+	err error
+}
+
+func (r errorReadCloser) Read([]byte) (int, error) {
+	return 0, r.err
+}
+
+func (r errorReadCloser) Close() error {
+	return nil
 }

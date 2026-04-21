@@ -37,15 +37,9 @@ func NewHub(log Log) *Hub {
 
 // StartBroadcast messages to all connections
 func (hub *Hub) StartBroadcast() {
-	for {
-		func() {
-			defer hub.deferStartBroadcast()
-			select {
-			case message := <-hub.broadcast:
-				hub.broadcastMessage(message)
-			default:
-			}
-		}()
+	defer hub.deferStartBroadcast()
+	for message := range hub.broadcast {
+		hub.broadcastMessage(message)
 	}
 }
 
@@ -171,10 +165,6 @@ func (hub *Hub) RegisterBlock(w http.ResponseWriter, r *http.Request, zone strin
 
 // WriteConnect // Push message to client
 func (m *Message) WriteConnect(w http.ResponseWriter) error {
-	// If the data buffer is an empty string abort.
-	if len(m.Data) == 0 && len(m.Comment) == 0 {
-		return errors.New("message data and comment is empty")
-	}
 	msg, err := m.Format()
 	if err != nil {
 		return err
@@ -248,20 +238,18 @@ func (hub *Hub) SendMessage(pkg Packet) error {
 		if !ok {
 			return nil
 		}
-		for {
-			select {
-			case <-b.allowPush:
-				b.messageChan <- pkg.Message
-				return nil
-			default:
-			}
-			select {
-			case b.messageChan <- pkg.Message:
-				// 消息成功推送
-				return nil
-			default:
-				continue
-			}
+		select {
+		case <-b.allowPush:
+			b.messageChan <- pkg.Message
+			return nil
+		default:
+		}
+		select {
+		case b.messageChan <- pkg.Message:
+			// 消息成功推送
+			return nil
+		default:
+			return fmt.Errorf("client message channel is blocked")
 		}
 	}
 	return nil

@@ -68,4 +68,5 @@ type Client struct {
 	exitHandler       func()
 	stopSignal        chan struct{}
 	exitSignal        chan struct{}
+	stopOnce          sync.Once
 }

@@ -3,6 +3,7 @@ package bitwise
 import (
 	"errors"
 	"os"
+	"path/filepath"
 )
 
 // EncryptFile 指定文件进行加密
@@ -13,15 +14,12 @@ func EncryptFile(filePath, seed, prePath string) (string, error) {
 	if len(seed) == 0 {
 		return "", errors.New("seed value is invalid")
 	}
-	fullFilePath := prePath + string(os.PathSeparator) + filePath
+	fullFilePath := filepath.Join(prePath, filePath)
 	data, err := os.ReadFile(fullFilePath)
 	if err != nil {
 		return "", err
 	}
-	b, err := Encrypt(data, seed)
-	if err != nil {
-		return "", err
-	}
+	b, _ := Encrypt(data, seed)
 	fName, err := SaveFile(b, fullFilePath)
 	if err != nil {
 		return "", err

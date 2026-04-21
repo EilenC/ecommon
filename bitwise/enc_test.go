@@ -114,3 +114,19 @@ func TestEncryptFile(t *testing.T) {
 		})
 	}
 }
+
+func TestEncryptFileSaveError(t *testing.T) {
+	tempDir := t.TempDir()
+	testFile := "test.txt"
+	if err := os.WriteFile(filepath.Join(tempDir, testFile), []byte("data"), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	originalExt := ext
+	defer func() { ext = originalExt }()
+	SetExt(string([]byte{0}))
+
+	if _, err := EncryptFile(testFile, "seed", tempDir); err == nil {
+		t.Fatal("EncryptFile() expected save error")
+	}
+}

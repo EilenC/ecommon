@@ -3,18 +3,18 @@ package ecommon
 import (
 	"crypto/tls"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/EilenC/ecommon/slices"
+	"time"
 )
 
 // GetFileContent to retrieve file content
 // Determine whether to use HTTP download by checking if the URL contains http://| https://
 func GetFileContent(url string) ([]byte, error) {
-	if strings.Contains(url, "http://") || strings.Contains(url, "https://") {
+	if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
 		b, err := DownloadFile(url)
 		if err != nil {
 			return nil, err
@@ -49,22 +49,20 @@ func DownloadFile(url string) (*[]byte, error) {
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
-	client := &http.Client{Transport: tr}
+	client := &http.Client{Transport: tr, Timeout: 30 * time.Second}
 	resp, err := client.Get(url)
-	if err != nil || resp.StatusCode != http.StatusOK || resp.Body == nil {
+	if err != nil {
 		return nil, err
 	}
-	if resp.ContentLength == -1 {
-		return nil, fmt.Errorf("content length is unknown")
-	}
-	//resource length from response header and directly create [] byte
-	body := make([]byte, resp.ContentLength)
 	defer func() {
 		_ = resp.Body.Close()
 	}()
-	err = slices.ReadAllForByte(resp.Body, body)
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("download %s returned status %d", url, resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("ReadFile Err:[%+v]", err)
+		return nil, fmt.Errorf("read download body: %w", err)
 	}
 	return &body, nil
 }
